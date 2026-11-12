@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Upload, Pipette, Palette, Image as ImageIcon, Check, RefreshCw, X } from 'lucide-react';
+import { Upload, Pipette, Palette, Image as ImageIcon, Check, RefreshCw, X, Zap, Link as LinkIcon, CheckCircle2 } from 'lucide-react';
+import { compressImageFile, getImageSizeKb } from '../lib/imageCompressor';
 
 interface ImageColorPickerProps {
   images: string[];
@@ -38,6 +39,8 @@ export const ImageColorPicker: React.FC<ImageColorPickerProps> = ({
   const [extractedPalette, setExtractedPalette] = useState<string[]>([]);
   const [urlInput, setUrlInput] = useState('');
   const [showUrlField, setShowUrlField] = useState(false);
+  const [isCompressing, setIsCompressing] = useState(false);
+  const [compressionNotice, setCompressionNotice] = useState<string | null>(null);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const imagePreviewRef = useRef<HTMLImageElement | null>(null);
@@ -93,56 +96,74 @@ export const ImageColorPicker: React.FC<ImageColorPickerProps> = ({
 
         setExtractedPalette(sortedColors);
       } catch (err) {
-        // Cross-origin image restriction if any
         console.warn('Could not extract palette from image due to CORS', err);
       }
     };
     img.src = primaryImage;
   }, [primaryImage]);
 
-  // Handle Drag & Drop Files
-  const handleDrop = (e: React.DragEvent) => {
+  // Handle Drag & Drop Files with Smart Canvas Compression to minimal KB
+  const handleDrop = async (e: React.DragEvent) => {
     e.preventDefault();
     const files = Array.from(e.dataTransfer.files).filter((file) => file.type.startsWith('image/'));
-    processFiles(files);
+    await processFiles(files);
   };
 
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
       const files = Array.from(e.target.files);
-      processFiles(files);
+      await processFiles(files);
     }
   };
 
-  const processFiles = (files: File[]) => {
+  const processFiles = async (files: File[]) => {
     if (files.length === 0) return;
 
-    files.forEach((file) => {
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        const result = event.target?.result as string;
-        if (result) {
-          if (allowMultiple) {
-            onChangeImages([...images, result]);
-          } else {
-            onChangeImages([result]);
-          }
-        }
-      };
-      reader.readAsDataURL(file);
-    });
+    setIsCompressing(true);
+    setCompressionNotice(null);
+
+    try {
+      const compressedList: string[] = [];
+      let totalSaved = 0;
+      let lastSize = 0;
+
+      for (const file of files) {
+        const result = await compressImageFile(file, 850, 850, 0.72);
+        compressedList.push(result.dataUrl);
+        totalSaved += Math.max(0, result.originalSizeKb - result.sizeKb);
+        lastSize = result.sizeKb;
+      }
+
+      if (allowMultiple) {
+        onChangeImages([...images, ...compressedList]);
+      } else {
+        onChangeImages(compressedList);
+      }
+
+      setCompressionNotice(
+        `⚡ Compressed to ${lastSize} KB (saved ~${totalSaved} KB)! Minimum KB storage achieved.`
+      );
+      setTimeout(() => setCompressionNotice(null), 5000);
+    } catch (err) {
+      console.error('Image compression error', err);
+    } finally {
+      setIsCompressing(false);
+    }
   };
 
-  // Handle Manual URL Add
+  // Handle Manual URL Add (uses ~0.08 KB)
   const handleAddUrl = () => {
-    if (!urlInput.trim()) return;
+    const trimmed = urlInput.trim();
+    if (!trimmed) return;
     if (allowMultiple) {
-      onChangeImages([...images, urlInput.trim()]);
+      onChangeImages([...images, trimmed]);
     } else {
-      onChangeImages([urlInput.trim()]);
+      onChangeImages([trimmed]);
     }
     setUrlInput('');
     setShowUrlField(false);
+    setCompressionNotice(`⚡ URL added (${getImageSizeKb(trimmed)} KB) — Minimal Supabase payload!`);
+    setTimeout(() => setCompressionNotice(null), 4000);
   };
 
   const handleRemoveImage = (index: number) => {
@@ -249,8 +270,10 @@ export const ImageColorPicker: React.FC<ImageColorPickerProps> = ({
         <div
           onDragOver={(e) => e.preventDefault()}
           onDrop={handleDrop}
-          onClick={() => fileInputRef.current?.click()}
-          className="border-2 border-dashed border-[#CCCCCC] hover:border-[#9F2089] bg-[#FAF8F5] hover:bg-[#FDE5F4]/30 rounded-lg p-5 text-center cursor-pointer transition-all flex flex-col items-center justify-center space-y-2 group"
+          onClick={() => !isCompressing && fileInputRef.current?.click()}
+          className={`border-2 border-dashed ${
+            isCompressing ? 'border-[#9F2089] bg-[#FDE5F4]/40' : 'border-[#CCCCCC] hover:border-[#9F2089] bg-[#FAF8F5] hover:bg-[#FDE5F4]/30'
+          } rounded-lg p-5 text-center cursor-pointer transition-all flex flex-col items-center justify-center space-y-2 group`}
         >
           <input
             type="file"
@@ -262,69 +285,99 @@ export const ImageColorPicker: React.FC<ImageColorPickerProps> = ({
           />
 
           <div className="w-10 h-10 rounded-full bg-white shadow-xs border border-[#E8E8E8] flex items-center justify-center text-[#9F2089] group-hover:scale-110 transition-transform">
-            <Upload className="w-5 h-5" />
+            {isCompressing ? <RefreshCw className="w-5 h-5 animate-spin" /> : <Upload className="w-5 h-5" />}
           </div>
 
           <div className="text-xs">
-            <span className="font-bold text-[#9F2089]">Click to upload</span> or drag and drop image here
+            {isCompressing ? (
+              <span className="font-bold text-[#9F2089]">Compressing to minimal KB...</span>
+            ) : (
+              <>
+                <span className="font-bold text-[#9F2089]">Click to upload</span> or drag and drop image here
+              </>
+            )}
           </div>
-          <div className="text-[10px] text-[#888888]">
-            JPG, PNG, WEBP supported. No need to type complex links manually!
+          <div className="text-[10px] text-[#666666] max-w-sm">
+            ⚡ <strong>Smart Auto-Compression:</strong> Any high-res photo is automatically compressed to ~25-45 KB to save Supabase free 2GB storage!
           </div>
         </div>
 
-        {/* Optional Manual URL Input */}
-        {showUrlField && (
-          <div className="mt-2 flex gap-2">
-            <input
-              type="url"
-              value={urlInput}
-              onChange={(e) => setUrlInput(e.target.value)}
-              placeholder="Paste image link here (e.g. https://...)"
-              className="flex-1 px-3 py-1.5 text-xs border border-[#CCCCCC] rounded focus:border-[#9F2089] focus:outline-none"
-            />
-            <button
-              type="button"
-              onClick={handleAddUrl}
-              className="px-3 py-1.5 bg-[#9F2089] text-white text-xs font-bold rounded"
-            >
-              Add
-            </button>
+        {/* Compression feedback notice */}
+        {compressionNotice && (
+          <div className="mt-2 text-[11px] bg-emerald-50 text-emerald-800 border border-emerald-200 px-3 py-1.5 rounded flex items-center gap-1.5 animate-fadeIn">
+            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+            <span>{compressionNotice}</span>
           </div>
         )}
 
-        {/* Image Previews Thumbnails Grid */}
-        {images.length > 0 && (
-          <div className="mt-3 flex flex-wrap gap-2">
-            {images.map((img, idx) => (
-              <div
-                key={idx}
-                className="relative w-16 h-20 rounded-md overflow-hidden border-2 border-[#E8E8E8] bg-white group shadow-xs"
+        {/* Optional Manual URL Input */}
+        {showUrlField && (
+          <div className="mt-2 space-y-1.5 p-2.5 bg-white border border-[#E0E0E0] rounded">
+            <div className="flex gap-2">
+              <input
+                type="url"
+                value={urlInput}
+                onChange={(e) => setUrlInput(e.target.value)}
+                placeholder="Paste image link here (e.g. https://images.unsplash.com/...)"
+                className="flex-1 px-3 py-1.5 text-xs border border-[#CCCCCC] rounded focus:border-[#9F2089] focus:outline-none font-mono"
+              />
+              <button
+                type="button"
+                onClick={handleAddUrl}
+                className="px-3.5 py-1.5 bg-[#9F2089] text-white text-xs font-bold rounded hover:bg-[#80182E] transition-colors"
               >
-                <img
-                  src={img}
-                  alt={`Preview ${idx + 1}`}
-                  className="w-full h-full object-cover"
-                  referrerPolicy="no-referrer"
-                />
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleRemoveImage(idx);
-                  }}
-                  className="absolute top-1 right-1 p-0.5 bg-red-600 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity shadow-xs"
-                  title="Remove image"
+                Add URL
+              </button>
+            </div>
+            <p className="text-[10px] text-[#777777]">
+              💡 Web URLs consume only ~0.08 KB in Supabase database rows.
+            </p>
+          </div>
+        )}
+
+        {/* Image Previews Thumbnails Grid with KB size badges */}
+        {images.length > 0 && (
+          <div className="mt-3 flex flex-wrap gap-2.5">
+            {images.map((img, idx) => {
+              const kbSize = getImageSizeKb(img);
+              const isUrlOnly = img.startsWith('http://') || img.startsWith('https://');
+
+              return (
+                <div
+                  key={idx}
+                  className="relative w-20 h-24 rounded-md overflow-hidden border-2 border-[#E8E8E8] bg-white group shadow-xs flex flex-col"
                 >
-                  <X className="w-3 h-3" />
-                </button>
-                {idx === 0 && (
-                  <span className="absolute bottom-0 inset-x-0 bg-black/70 text-white text-[8px] font-bold text-center py-0.5 uppercase">
-                    Primary
-                  </span>
-                )}
-              </div>
-            ))}
+                  <img
+                    src={img}
+                    alt={`Preview ${idx + 1}`}
+                    className="w-full h-full object-cover"
+                    referrerPolicy="no-referrer"
+                  />
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleRemoveImage(idx);
+                    }}
+                    className="absolute top-1 right-1 p-0.5 bg-red-600 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity shadow-xs z-10"
+                    title="Remove image"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+
+                  {/* Top-left KB tag */}
+                  <div className="absolute top-1 left-1 bg-black/75 backdrop-blur-xs text-white text-[9px] font-mono font-semibold px-1 py-0.5 rounded shadow-xs">
+                    {isUrlOnly ? `${kbSize} KB (URL)` : `${kbSize} KB`}
+                  </div>
+
+                  {idx === 0 && (
+                    <span className="absolute bottom-0 inset-x-0 bg-[#9F2089]/90 text-white text-[8px] font-bold text-center py-0.5 uppercase tracking-wide">
+                      Primary
+                    </span>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
       </div>

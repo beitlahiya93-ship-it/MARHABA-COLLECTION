@@ -16,6 +16,14 @@ import { INITIAL_BANNERS } from './data/banners';
 import { INITIAL_CATEGORIES } from './data/categories';
 import { Product, Banner, Category, CartItem, FilterState, Order } from './types';
 import { Sparkles, ShoppingBag, Settings, Store } from 'lucide-react';
+import { 
+  getSupabaseConfig, 
+  fetchCategoriesFromSupabase, 
+  fetchProductsFromSupabase, 
+  fetchBannersFromSupabase, 
+  fetchOrdersFromSupabase, 
+  saveOrderToSupabase 
+} from './lib/supabase';
 
 export default function App() {
   // Admin View State
@@ -109,6 +117,33 @@ export default function App() {
       console.error('Failed saving orders to localStorage', e);
     }
   }, [recentOrders]);
+
+  // Initial Sync from Supabase Table Editor if configured
+  useEffect(() => {
+    const cfg = getSupabaseConfig();
+    if (cfg.url && cfg.anonKey) {
+      fetchCategoriesFromSupabase(cfg).then((remoteCategories) => {
+        if (remoteCategories && remoteCategories.length > 0) {
+          setCategories(remoteCategories);
+        }
+      });
+      fetchProductsFromSupabase(cfg).then((remoteProducts) => {
+        if (remoteProducts && remoteProducts.length > 0) {
+          setProducts(remoteProducts);
+        }
+      });
+      fetchBannersFromSupabase(cfg).then((remoteBanners) => {
+        if (remoteBanners && remoteBanners.length > 0) {
+          setBanners(remoteBanners);
+        }
+      });
+      fetchOrdersFromSupabase(cfg).then((remoteOrders) => {
+        if (remoteOrders && remoteOrders.length > 0) {
+          setRecentOrders(remoteOrders);
+        }
+      });
+    }
+  }, []);
 
   // Category & Filter State
   const [activeCategory, setActiveCategory] = useState<string>('all');
@@ -303,6 +338,12 @@ export default function App() {
   const handleOrderPlaced = (order: Order) => {
     setRecentOrders((prev) => [order, ...prev]);
     setCart([]);
+    const cfg = getSupabaseConfig();
+    if (cfg.url && cfg.anonKey) {
+      saveOrderToSupabase(order, cfg).catch((err) =>
+        console.warn('Could not auto-sync order to Supabase Table Editor', err)
+      );
+    }
   };
 
   // ==========================================

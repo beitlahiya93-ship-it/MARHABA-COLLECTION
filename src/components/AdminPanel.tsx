@@ -2,11 +2,25 @@ import React, { useState } from 'react';
 import { 
   Plus, Edit, Trash2, ArrowLeft, Image as ImageIcon, Package, 
   ShoppingBag, Check, X, RefreshCw, FolderTree, Database, 
-  Copy, ExternalLink, ShieldCheck, CheckCircle2, AlertCircle
+  Copy, ExternalLink, ShieldCheck, CheckCircle2, AlertCircle, Zap, Upload
 } from 'lucide-react';
 import { Product, Banner, Order, Category, SupabaseConfig } from '../types';
 import { ImageColorPicker } from './ImageColorPicker';
-import { SUPABASE_SQL_SCHEMA, getSupabaseConfig, saveSupabaseConfig, testSupabaseConnection } from '../lib/supabase';
+import { 
+  SUPABASE_SQL_SCHEMA, 
+  getSupabaseConfig, 
+  saveSupabaseConfig, 
+  testSupabaseConnection,
+  saveProductToSupabase,
+  deleteProductFromSupabase,
+  saveCategoryToSupabase,
+  deleteCategoryFromSupabase,
+  saveBannerToSupabase,
+  deleteBannerFromSupabase,
+  saveOrderToSupabase,
+  batchSyncAllToSupabase
+} from '../lib/supabase';
+import { compressImageFile, getImageSizeKb } from '../lib/imageCompressor';
 
 interface AdminPanelProps {
   products: Product[];
@@ -106,7 +120,18 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [supabaseConfig, setSupabaseConfig] = useState<SupabaseConfig>(getSupabaseConfig());
   const [supabaseTesting, setSupabaseTesting] = useState(false);
   const [supabaseTestResult, setSupabaseTestResult] = useState<string | null>(null);
+  const [testErrorMessage, setTestErrorMessage] = useState<string | null>(null);
   const [copiedSchema, setCopiedSchema] = useState(false);
+  const [syncingAll, setSyncingAll] = useState(false);
+  const [syncResult, setSyncResult] = useState<{ success: boolean; message: string; details?: any } | null>(null);
+  const [toastMessage, setToastMessage] = useState<{ text: string; type: 'success' | 'error' | 'info' } | null>(null);
+  const [categoryCompressing, setCategoryCompressing] = useState(false);
+  const [bannerCompressing, setBannerCompressing] = useState(false);
+
+  const showToast = (text: string, type: 'success' | 'error' | 'info' = 'success') => {
+    setToastMessage({ text, type });
+    setTimeout(() => setToastMessage(null), 4000);
+  };
 
   // Filtered Products for Admin
   const filteredProducts = products.filter((p) => {
@@ -222,6 +247,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         mTrusted: productForm.mTrusted
       };
       onUpdateProduct(updated);
+      if (supabaseConfig.url && supabaseConfig.anonKey) {
+        saveProductToSupabase(updated, supabaseConfig).then((ok) => {
+          if (ok) showToast('Product updated in Supabase Table Editor!');
+        });
+      }
     } else {
       const newProd: Product = {
         id: `prod-${Date.now()}`,
@@ -267,8 +297,22 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         ]
       };
       onAddProduct(newProd);
+      if (supabaseConfig.url && supabaseConfig.anonKey) {
+        saveProductToSupabase(newProd, supabaseConfig).then((ok) => {
+          if (ok) showToast('New product saved to Supabase Table Editor!');
+        });
+      }
     }
     setIsProductModalOpen(false);
+  };
+
+  const handleDeleteProductWithSync = (productId: string) => {
+    onDeleteProduct(productId);
+    if (supabaseConfig.url && supabaseConfig.anonKey) {
+      deleteProductFromSupabase(productId, supabaseConfig).then((ok) => {
+        if (ok) showToast('Product deleted from Supabase Table Editor');
+      });
+    }
   };
 
   // ==========================================
@@ -309,6 +353,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         description: categoryForm.description
       };
       onUpdateCategory(updated);
+      if (supabaseConfig.url && supabaseConfig.anonKey) {
+        saveCategoryToSupabase(updated, supabaseConfig).then((ok) => {
+          if (ok) showToast('Category updated in Supabase Table Editor!');
+        });
+      }
     } else {
       const newCat: Category = {
         id: slug || `cat-${Date.now()}`,
@@ -319,8 +368,22 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         itemCount: 0
       };
       onAddCategory(newCat);
+      if (supabaseConfig.url && supabaseConfig.anonKey) {
+        saveCategoryToSupabase(newCat, supabaseConfig).then((ok) => {
+          if (ok) showToast('Category added to Supabase Table Editor!');
+        });
+      }
     }
     setIsCategoryModalOpen(false);
+  };
+
+  const handleDeleteCategoryWithSync = (categoryId: string) => {
+    onDeleteCategory(categoryId);
+    if (supabaseConfig.url && supabaseConfig.anonKey) {
+      deleteCategoryFromSupabase(categoryId, supabaseConfig).then((ok) => {
+        if (ok) showToast('Category deleted from Supabase Table Editor');
+      });
+    }
   };
 
   // ==========================================
@@ -359,35 +422,72 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const handleSaveBanner = (e: React.FormEvent) => {
     e.preventDefault();
     if (editingBanner) {
-      onUpdateBanner({ ...editingBanner, ...bannerForm });
+      const updated = { ...editingBanner, ...bannerForm };
+      onUpdateBanner(updated);
+      if (supabaseConfig.url && supabaseConfig.anonKey) {
+        saveBannerToSupabase(updated, supabaseConfig).then((ok) => {
+          if (ok) showToast('Banner updated in Supabase Table Editor!');
+        });
+      }
     } else {
-      onAddBanner({ id: `banner-${Date.now()}`, ...bannerForm });
+      const newBanner = { id: `banner-${Date.now()}`, ...bannerForm };
+      onAddBanner(newBanner);
+      if (supabaseConfig.url && supabaseConfig.anonKey) {
+        saveBannerToSupabase(newBanner, supabaseConfig).then((ok) => {
+          if (ok) showToast('Banner added to Supabase Table Editor!');
+        });
+      }
     }
     setIsBannerModalOpen(false);
   };
 
+  const handleDeleteBannerWithSync = (bannerId: string) => {
+    onDeleteBanner(bannerId);
+    if (supabaseConfig.url && supabaseConfig.anonKey) {
+      deleteBannerFromSupabase(bannerId, supabaseConfig).then((ok) => {
+        if (ok) showToast('Banner deleted from Supabase Table Editor');
+      });
+    }
+  };
+
   // ==========================================
-  // SUPABASE CONNECT & TEST
+  // SUPABASE CONNECT & TEST & MASTER SYNC
   // ==========================================
   const handleTestSupabase = async () => {
     setSupabaseTesting(true);
     setSupabaseTestResult(null);
+    setTestErrorMessage(null);
 
-    const ok = await testSupabaseConnection(supabaseConfig.url, supabaseConfig.anonKey);
+    const res = await testSupabaseConnection(supabaseConfig.url, supabaseConfig.anonKey);
     setSupabaseTesting(false);
 
-    if (ok) {
-      setSupabaseConfig({ ...supabaseConfig, isConnected: true });
-      saveSupabaseConfig({ ...supabaseConfig, isConnected: true });
+    if (res.success) {
+      const updated = { ...supabaseConfig, isConnected: true };
+      setSupabaseConfig(updated);
+      saveSupabaseConfig(updated);
       setSupabaseTestResult('success');
+      showToast('Connected to Supabase! Table Editor is ready.');
     } else {
       setSupabaseTestResult('error');
+      setTestErrorMessage(res.message);
+    }
+  };
+
+  const handleSyncAllToSupabase = async () => {
+    setSyncingAll(true);
+    setSyncResult(null);
+    const res = await batchSyncAllToSupabase(categories, products, banners, orders, supabaseConfig);
+    setSyncingAll(false);
+    setSyncResult(res);
+    if (res.success) {
+      showToast('Synchronized all data to Supabase Table Editor!');
     }
   };
 
   const handleCopySchema = () => {
     navigator.clipboard.writeText(SUPABASE_SQL_SCHEMA);
     setCopiedSchema(true);
+    showToast('SQL Schema copied to clipboard!');
     setTimeout(() => setCopiedSchema(false), 2500);
   };
 
@@ -395,6 +495,18 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
   return (
     <div className="min-h-screen bg-[#F4F4F6] text-[#222222]">
+      {/* Floating Realtime Toast */}
+      {toastMessage && (
+        <div className="fixed top-4 right-4 z-50 bg-[#1E1E2E] text-white px-4 py-3 rounded-lg shadow-2xl border border-white/20 flex items-center gap-2.5 text-xs font-semibold animate-fadeIn">
+          {toastMessage.type === 'error' ? (
+            <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+          ) : (
+            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+          )}
+          <span>{toastMessage.text}</span>
+        </div>
+      )}
+
       {/* Admin Top Header */}
       <header className="sticky top-0 z-40 bg-[#9F2089] text-white shadow-md">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between">
@@ -659,7 +771,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                             <button
                               onClick={() => {
                                 if (confirm(`Delete "${p.title}"?`)) {
-                                  onDeleteProduct(p.id);
+                                  handleDeleteProductWithSync(p.id);
                                 }
                               }}
                               className="p-1.5 text-red-600 hover:bg-red-50 rounded transition-colors"
@@ -754,7 +866,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                         <button
                           onClick={() => {
                             if (confirm(`Delete category "${cat.label}"?`)) {
-                              onDeleteCategory(cat.id);
+                              handleDeleteCategoryWithSync(cat.id);
                             }
                           }}
                           className="px-2.5 py-1 text-xs font-semibold bg-white border border-red-200 text-red-600 rounded hover:bg-red-50 flex items-center gap-1"
@@ -846,7 +958,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                       <button
                         onClick={() => {
                           if (confirm(`Delete banner "${b.title}"?`)) {
-                            onDeleteBanner(b.id);
+                            handleDeleteBannerWithSync(b.id);
                           }
                         }}
                         className="px-2.5 py-1 text-xs font-semibold bg-white border border-red-200 text-red-600 rounded hover:bg-red-50 flex items-center gap-1"
@@ -1033,52 +1145,146 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 </div>
               </div>
 
-              <div className="flex items-center justify-between pt-2">
-                <div className="flex items-center gap-2">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <button
                     onClick={handleTestSupabase}
                     disabled={supabaseTesting || !supabaseConfig.url || !supabaseConfig.anonKey}
-                    className="px-4 py-2 bg-[#3ECF8E] hover:bg-[#2EB875] text-[#111C2D] font-bold text-xs rounded transition-colors disabled:opacity-50 flex items-center gap-1.5"
+                    className="px-4 py-2 bg-[#3ECF8E] hover:bg-[#2EB875] text-[#111C2D] font-bold text-xs rounded transition-colors disabled:opacity-50 flex items-center gap-1.5 shadow-2xs"
                   >
                     {supabaseTesting ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
                     <span>Test & Save Supabase Connection</span>
                   </button>
 
-                  {supabaseTestResult === 'success' && (
-                    <span className="text-xs text-emerald-700 font-bold flex items-center gap-1">
-                      <Check className="w-4 h-4 text-emerald-600" />
-                      Connected to Supabase!
-                    </span>
-                  )}
-                  {supabaseTestResult === 'error' && (
-                    <span className="text-xs text-red-600 font-bold flex items-center gap-1">
-                      <AlertCircle className="w-4 h-4 text-red-600" />
-                      Connection failed. Check URL, Key, or run SQL schema below.
-                    </span>
-                  )}
+                  <button
+                    onClick={handleSyncAllToSupabase}
+                    disabled={syncingAll || !supabaseConfig.url || !supabaseConfig.anonKey}
+                    className="px-4 py-2 bg-[#9F2089] hover:bg-[#80182E] text-white font-bold text-xs rounded transition-colors disabled:opacity-50 flex items-center gap-1.5 shadow-2xs"
+                  >
+                    {syncingAll ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5 text-[#FECE57]" />}
+                    <span>1-Click Sync All Store Data to Supabase Table Editor</span>
+                  </button>
                 </div>
 
                 <span className="text-[11px] text-[#777777]">
-                  Status: <strong>{supabaseConfig.isConnected ? 'Connected & Synced' : 'Offline / Local Persistence Active'}</strong>
+                  Status: <strong className={supabaseConfig.isConnected ? 'text-emerald-700' : 'text-[#888888]'}>
+                    {supabaseConfig.isConnected ? '● Connected & Synced' : '○ Offline / Local Persistence Active'}
+                  </strong>
                 </span>
+              </div>
+
+              {/* Status and Diagnostic Results */}
+              {supabaseTestResult === 'success' && (
+                <div className="p-3 bg-emerald-50 border border-emerald-200 rounded text-xs text-emerald-800 flex items-start gap-2">
+                  <Check className="w-4 h-4 text-emerald-600 mt-0.5 shrink-0" />
+                  <div>
+                    <strong>Connected to Supabase!</strong> All tables (categories, products, banners, orders) are verified and accessible.
+                  </div>
+                </div>
+              )}
+
+              {supabaseTestResult === 'error' && (
+                <div className="p-3 bg-red-50 border border-red-200 rounded text-xs text-red-800 space-y-1">
+                  <div className="flex items-center gap-1.5 font-bold">
+                    <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
+                    <span>Connection Error</span>
+                  </div>
+                  <p className="text-[11px] text-red-700 font-mono">
+                    {testErrorMessage || 'Connection failed. Please run the SQL schema script below in Supabase SQL Editor.'}
+                  </p>
+                </div>
+              )}
+
+              {syncResult && (
+                <div className={`p-3 rounded text-xs border ${
+                  syncResult.success 
+                    ? 'bg-emerald-50 border-emerald-200 text-emerald-800' 
+                    : 'bg-amber-50 border-amber-200 text-amber-800'
+                } flex items-start gap-2`}>
+                  {syncResult.success ? <CheckCircle2 className="w-4 h-4 text-emerald-600 mt-0.5 shrink-0" /> : <AlertCircle className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />}
+                  <div>
+                    <div className="font-bold">{syncResult.success ? 'Sync Successful!' : 'Sync Notice'}</div>
+                    <div className="text-[11px] mt-0.5">{syncResult.message}</div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Storage Optimization & Low-KB Architecture Explanation */}
+            <div className="bg-gradient-to-r from-[#FAF8F5] to-[#FDE5F4]/40 border border-[#E8E8E8] p-5 rounded-lg shadow-xs space-y-3">
+              <div className="flex items-center gap-2">
+                <Zap className="w-4 h-4 text-[#9F2089]" />
+                <h4 className="font-bold text-sm text-[#222222]">
+                  Minimal KB Storage Architecture (Saves Supabase Free 2GB Quota)
+                </h4>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs text-[#555555]">
+                <div className="p-3 bg-white rounded border border-[#E8E8E8] space-y-1">
+                  <strong className="text-[#222222] block font-bold">⚡ Smart Canvas Compression</strong>
+                  <p className="text-[11px] leading-relaxed">
+                    When you drop or upload an image, it is automatically compressed down to ~25-45 KB on the fly using bicubic resampling and WebP/JPEG format.
+                  </p>
+                </div>
+                <div className="p-3 bg-white rounded border border-[#E8E8E8] space-y-1">
+                  <strong className="text-[#222222] block font-bold">🔗 Ultra-Low KB Web URLs</strong>
+                  <p className="text-[11px] leading-relaxed">
+                    Hosted web image URLs take only ~0.08 KB per row in PostgreSQL. Storing 1,000 products uses less than 1 MB of database space!
+                  </p>
+                </div>
+                <div className="p-3 bg-white rounded border border-[#E8E8E8] space-y-1">
+                  <strong className="text-[#222222] block font-bold">🛡️ Zero Storage Bucket Quota</strong>
+                  <p className="text-[11px] leading-relaxed">
+                    By storing lightweight URL arrays directly in PostgreSQL columns, your free 2GB Supabase object storage bucket remains 100% untouched and clean!
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Step-by-Step Instructions in Easy Hinglish */}
+            <div className="bg-white p-5 rounded-lg border border-[#E8E8E8] shadow-xs space-y-3">
+              <h4 className="font-bold text-sm text-[#222222] flex items-center gap-2">
+                <ShieldCheck className="w-4 h-4 text-[#9F2089]" />
+                <span>Supabase Table Editor Setup Guide (Sirf 1 Baar Karna Hai)</span>
+              </h4>
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-xs">
+                <div className="p-3 bg-[#FAF8F5] rounded border border-[#E8E8E8] space-y-1">
+                  <span className="w-5 h-5 rounded-full bg-[#9F2089] text-white flex items-center justify-center font-bold text-[10px]">1</span>
+                  <strong className="text-[#222222] block font-bold">Copy SQL Schema</strong>
+                  <p className="text-[11px] text-[#666666]">Neeche diye gaye purple button par click karein aur SQL copy karein.</p>
+                </div>
+                <div className="p-3 bg-[#FAF8F5] rounded border border-[#E8E8E8] space-y-1">
+                  <span className="w-5 h-5 rounded-full bg-[#9F2089] text-white flex items-center justify-center font-bold text-[10px]">2</span>
+                  <strong className="text-[#222222] block font-bold">Supabase SQL Editor</strong>
+                  <p className="text-[11px] text-[#666666]">Supabase dashboard mein <strong>SQL Editor</strong> khol kar paste karein aur <strong>Run</strong> karein.</p>
+                </div>
+                <div className="p-3 bg-[#FAF8F5] rounded border border-[#E8E8E8] space-y-1">
+                  <span className="w-5 h-5 rounded-full bg-[#9F2089] text-white flex items-center justify-center font-bold text-[10px]">3</span>
+                  <strong className="text-[#222222] block font-bold">Check Table Editor</strong>
+                  <p className="text-[11px] text-[#666666]">Left menu mein <strong>Table Editor</strong> kholiye, categories, products aur banners ka poora real data turant dikhega!</p>
+                </div>
+                <div className="p-3 bg-[#FAF8F5] rounded border border-[#E8E8E8] space-y-1">
+                  <span className="w-5 h-5 rounded-full bg-[#9F2089] text-white flex items-center justify-center font-bold text-[10px]">4</span>
+                  <strong className="text-[#222222] block font-bold">Realtime Live Save</strong>
+                  <p className="text-[11px] text-[#666666]">Upar URL aur Anon Key daal kar Save karein, ab koi bhi product add/edit karenge toh Supabase Table Editor mein direct save hoga!</p>
+                </div>
               </div>
             </div>
 
             {/* Complete SQL Schema Script for Supabase */}
             <div className="bg-white p-5 rounded-lg border border-[#E8E8E8] shadow-xs space-y-3">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
                   <h4 className="font-bold text-sm text-[#222222]">
-                    Step-by-Step Supabase SQL Script (Run Once)
+                    Complete Supabase SQL Script (With Real Seed Data & Permissive RLS)
                   </h4>
                   <p className="text-xs text-[#666666]">
-                    Copy and run this SQL script in your <strong>Supabase SQL Editor</strong> to create all tables (categories, products, banners, orders) with RLS policies:
+                    Creates <code>categories</code>, <code>products</code>, <code>banners</code>, <code>orders</code> tables and populates them instantly in your Supabase Table Editor:
                   </p>
                 </div>
 
                 <button
                   onClick={handleCopySchema}
-                  className="px-3.5 py-1.5 bg-[#9F2089] hover:bg-[#80182E] text-white font-bold text-xs rounded shadow-xs flex items-center gap-1.5 transition-all"
+                  className="px-4 py-2 bg-[#9F2089] hover:bg-[#80182E] text-white font-bold text-xs rounded shadow-xs flex items-center gap-1.5 transition-all shrink-0"
                 >
                   <Copy className="w-3.5 h-3.5" />
                   <span>{copiedSchema ? 'SQL Copied to Clipboard!' : 'Copy SQL Schema'}</span>
@@ -1360,25 +1566,67 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 />
               </div>
 
-              {/* Image Uploader & Dropzone for Category */}
+              {/* Image Uploader & Dropzone for Category with Minimal KB Compression */}
               <div>
-                <label className="block font-bold text-[#222222] mb-1">Category Cover Image</label>
+                <label className="block font-bold text-[#222222] mb-1 flex items-center justify-between">
+                  <span>Category Cover Image</span>
+                  <span className="text-[10px] text-[#9F2089] font-normal">
+                    {categoryForm.imageUrl ? `${getImageSizeKb(categoryForm.imageUrl)} KB` : ''}
+                  </span>
+                </label>
+
                 <div className="space-y-2">
-                  <div className="relative aspect-[4/3] rounded-md overflow-hidden bg-slate-100 border border-[#CCCCCC] max-h-40 flex items-center justify-center">
+                  <div className="relative aspect-[4/3] rounded-md overflow-hidden bg-slate-100 border border-[#CCCCCC] max-h-36 flex items-center justify-center group">
                     <img
                       src={categoryForm.imageUrl}
                       alt="Category preview"
                       className="w-full h-full object-cover"
                       referrerPolicy="no-referrer"
                     />
+                    <div className="absolute top-1 left-1 bg-black/75 text-white text-[9px] font-mono px-1 py-0.5 rounded">
+                      {categoryForm.imageUrl?.startsWith('data:') ? 'Compressed' : 'Web URL'} · {getImageSizeKb(categoryForm.imageUrl)} KB
+                    </div>
                   </div>
+
+                  {/* Dropzone for Category Image */}
+                  <label className="flex flex-col items-center justify-center p-3 border-2 border-dashed border-[#CCCCCC] hover:border-[#9F2089] rounded-md bg-[#FAF8F5] cursor-pointer hover:bg-[#FDE5F4]/30 transition-all text-center">
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          setCategoryCompressing(true);
+                          try {
+                            const res = await compressImageFile(file, 450, 450, 0.72);
+                            setCategoryForm({ ...categoryForm, imageUrl: res.dataUrl });
+                            showToast(`Category image compressed to ${res.sizeKb} KB!`);
+                          } catch (err) {
+                            console.error(err);
+                          } finally {
+                            setCategoryCompressing(false);
+                          }
+                        }
+                      }}
+                    />
+                    {categoryCompressing ? (
+                      <RefreshCw className="w-4 h-4 text-[#9F2089] animate-spin mb-1" />
+                    ) : (
+                      <Upload className="w-4 h-4 text-[#9F2089] mb-1" />
+                    )}
+                    <span className="text-[11px] font-bold text-[#9F2089]">
+                      {categoryCompressing ? 'Compressing...' : 'Click to Drop/Upload Image (Auto-Compressed)'}
+                    </span>
+                    <span className="text-[9px] text-[#777777]">Saves in minimal KB (~15-25 KB) for Supabase</span>
+                  </label>
 
                   <input
                     type="url"
                     value={categoryForm.imageUrl}
                     onChange={(e) => setCategoryForm({ ...categoryForm, imageUrl: e.target.value })}
-                    placeholder="Image URL or upload"
-                    className="w-full px-3 py-2 border border-[#CCCCCC] rounded focus:border-[#9F2089] text-[11px] font-mono"
+                    placeholder="Or paste direct image URL (0.08 KB)"
+                    className="w-full px-2.5 py-1.5 border border-[#CCCCCC] rounded focus:border-[#9F2089] text-[11px] font-mono"
                   />
                 </div>
               </div>
@@ -1484,15 +1732,69 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 </div>
               </div>
 
+              {/* Banner Image with Auto-Compression Dropzone */}
               <div>
-                <label className="block font-bold text-[#222222] mb-1">Banner Image URL *</label>
-                <input
-                  type="url"
-                  required
-                  value={bannerForm.imageUrl}
-                  onChange={(e) => setBannerForm({ ...bannerForm, imageUrl: e.target.value })}
-                  className="w-full px-3 py-2 border border-[#CCCCCC] rounded font-mono text-[11px]"
-                />
+                <label className="block font-bold text-[#222222] mb-1 flex items-center justify-between">
+                  <span>Banner Image (Drop or URL) *</span>
+                  <span className="text-[10px] text-[#9F2089]">
+                    {bannerForm.imageUrl ? `${getImageSizeKb(bannerForm.imageUrl)} KB` : ''}
+                  </span>
+                </label>
+
+                <div className="space-y-2">
+                  <div className="relative aspect-[16/6] rounded-md overflow-hidden bg-slate-100 border border-[#CCCCCC]">
+                    <img
+                      src={bannerForm.imageUrl}
+                      alt="Banner preview"
+                      className="w-full h-full object-cover"
+                      referrerPolicy="no-referrer"
+                    />
+                    <div className="absolute top-1 left-1 bg-black/75 text-white text-[9px] font-mono px-1 py-0.5 rounded">
+                      {bannerForm.imageUrl?.startsWith('data:') ? 'Compressed' : 'Web URL'} · {getImageSizeKb(bannerForm.imageUrl)} KB
+                    </div>
+                  </div>
+
+                  <label className="flex flex-col items-center justify-center p-3 border-2 border-dashed border-[#CCCCCC] hover:border-[#9F2089] rounded-md bg-[#FAF8F5] cursor-pointer hover:bg-[#FDE5F4]/30 transition-all text-center">
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          setBannerCompressing(true);
+                          try {
+                            const res = await compressImageFile(file, 1100, 450, 0.72);
+                            setBannerForm({ ...bannerForm, imageUrl: res.dataUrl });
+                            showToast(`Banner image compressed to ${res.sizeKb} KB!`);
+                          } catch (err) {
+                            console.error(err);
+                          } finally {
+                            setBannerCompressing(false);
+                          }
+                        }
+                      }}
+                    />
+                    {bannerCompressing ? (
+                      <RefreshCw className="w-4 h-4 text-[#9F2089] animate-spin mb-1" />
+                    ) : (
+                      <Upload className="w-4 h-4 text-[#9F2089] mb-1" />
+                    )}
+                    <span className="text-[11px] font-bold text-[#9F2089]">
+                      {bannerCompressing ? 'Compressing...' : 'Click to Drop/Upload Banner Image'}
+                    </span>
+                    <span className="text-[9px] text-[#777777]">Auto-compressed to ~25-45 KB to save database payload</span>
+                  </label>
+
+                  <input
+                    type="url"
+                    required
+                    value={bannerForm.imageUrl}
+                    onChange={(e) => setBannerForm({ ...bannerForm, imageUrl: e.target.value })}
+                    placeholder="Or paste direct banner image URL (0.08 KB)"
+                    className="w-full px-2.5 py-1.5 border border-[#CCCCCC] rounded font-mono text-[11px] focus:border-[#9F2089]"
+                  />
+                </div>
               </div>
 
               <div className="pt-3 border-t border-[#E8E8E8] flex justify-end gap-3">

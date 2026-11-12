@@ -5,7 +5,7 @@ export const INITIAL_BANNERS: Banner[] = [
     id: 'banner-1',
     title: 'Lowest Prices Every Day',
     subtitle: 'Free Delivery · Cash On Delivery · 7-Day Easy Returns',
-    badgeText: 'MEESHO MEGA DROP',
+    badgeText: 'MARHABA MEGA DROP',
     ctaText: 'Shop Sarees @ ₹299',
     categoryLink: 'sarees',
     imageUrl: 'https://images.unsplash.com/photo-1610030469983-98e550d6193c?auto=format&fit=crop&w=1200&q=80',
